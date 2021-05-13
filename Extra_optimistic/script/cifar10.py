@@ -31,6 +31,7 @@ from os.path import exists
 from os import makedirs
 #import tensorflow as tf
 
+
 try:
     from PIL import Image
 except ImportError:
@@ -125,6 +126,70 @@ def make_discriminator():
     return model
 
 
+def relu_block(inputs):
+    relu = ReLU()(inputs)
+    bn = BatchNormalization()(relu)
+    return bn
+
+
+def residual_block(downsample, filters, kernel_size: int = 3):
+    
+    y = Conv2D(kernel_size=kernel_size,
+               strides= 2,
+               filters=filters,
+               padding="same")(x)
+    y = relu_block(y)
+    y = Conv2D(kernel_size=kernel_size,
+               strides=2,
+               filters=filters,
+               padding="same")(y)
+
+    if downsample:
+        x = Conv2D(kernel_size=1,
+                   strides=2,
+                   filters=filters,
+                   padding="same")(y)
+    out = Add()([x, y])
+    out = relu_block(out)
+    return out
+
+
+def make_resnet_generator():
+    
+    model = Sequential()
+    if K.image_data_format() == 'channels_first':
+        model.add(Conv2D(64, (5, 5), padding='same', input_shape=(3, 32, 32)))
+    else:
+        model.add(Conv2D(64, (5, 5), padding='same', input_shape=(32, 32, 3)))
+    
+    model.add(residual_block(downsample=False, filters=128))
+    model.add(residual_block(downsample=False, filters=128))
+    model.add(residual_block(downsample=False, filters=128))
+    model.add(LeakyReLU())
+    model.add(Conv2d(filters=128, 3, 3, padding=1))
+    model.add(LeakyReLU())
+
+    return model
+
+
+def make_resnet_discriminator():
+    
+    model = Sequential()
+    if K.image_data_format() == 'channels_first':
+        model.add(Conv2D(64, (5, 5), padding='same', input_shape=(3, 32, 32)))
+    else:
+        model.add(Conv2D(64, (5, 5), padding='same', input_shape=(32, 32, 3)))
+    
+    model.add(residual_block(downsample=True, filters=128))
+    model.add(residual_block(downsample=True, filters=128))
+    model.add(residual_block(downsample=True, filters=128))
+    model.add(LeakyReLU())
+    model.add(Conv2d(filters=128, 3, 3, padding=1))
+    model.add(LeakyReLU())
+
+    return model
+
+
 def tile_images(image_stack):
     """Given a stacked tensor of images, reshapes them into a horizontal tiling for display."""
     assert len(image_stack.shape) == 4
@@ -167,6 +232,7 @@ parser.add_argument("--lr", dest='optimizer_lr', default=1e-4, type=float, help=
 parser.add_argument("--momentum", default=0, type=float)
 parser.add_argument("--nesterov", action='store_true')
 parser.add_argument("--optimizer", required=True)
+parser.add_argument('--model', choices=('resnet', 'std_conv'), default='std_conv')
 parser.add_argument("--schedule", default=None)
 parser.add_argument("--gp", default=10.0, type=float)
 parser.add_argument("--beta_1", default=0.5, type=float)
@@ -192,8 +258,13 @@ else:
 X_train = (X_train.astype(np.float32) - 127.5) / 127.5
 
 # Now we initialize the generator and discriminator.
-generator = make_generator()
-discriminator = make_discriminator()
+if args.model == 'std_conv':
+    generator = make_generator()
+    discriminator = make_discriminator()
+elif args.model == 'resnet':
+    generator = make_resnet_generator()
+    discriminator = make_resnet_discriminator()
+    
 if args.retrain_dir:
     generator.load_weights(os.path.join(args.retrain_dir, 'epoch_{}_g.h5'.format(args.retrain_epoch)))
     discriminator.load_weights(os.path.join(args.retrain_dir, 'epoch_{}_d.h5'.format(args.retrain_epoch)))
@@ -226,12 +297,17 @@ else:
             'OFRL': OFRL,
             'OMDA': OMDA,
             'optimAdam': optimAdam,
+            'extraOptimAdam': ExtraoptimAdam,
             'optimAdagrad': optimAdagrad,
             }
     if args.optimizer == 'optimAdam':
         d_optim = optim_mapper[args.optimizer](lr=args.optimizer_lr, beta_1=args.beta_1, beta_2=args.beta_2)
         g_optim = optim_mapper[args.optimizer](lr=args.optimizer_lr, beta_1=args.beta_1, beta_2=args.beta_2)
         print("Pass3")
+    elif args.optimizer == 'extraOptimAdam':
+        d_optim = optim_mapper[args.optimizer](lr=args.optimizer_lr, beta_1=args.beta_1, beta_2=args.beta_2)
+        g_optim = optim_mapper[args.optimizer](lr=args.optimizer_lr, beta_1=args.beta_1, beta_2=args.beta_2)
+        print("Pass4")
     elif args.optimizer == 'optimAdagrad':
         d_optim = optim_mapper[args.optimizer](lr=args.optimizer_lr)
         g_optim = optim_mapper[args.optimizer](lr=args.optimizer_lr)

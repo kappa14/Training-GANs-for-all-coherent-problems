@@ -38,3 +38,4 @@ def build_discriminator(seqlen, nchannel, output_activation = 'relu'):
     model.add(Dense(1))
     model.add(Activation(output_activation))
     return model
+
